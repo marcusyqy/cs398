@@ -39,6 +39,7 @@ int main(int argc, char **argv)
 	}
 	
 	nIter = (uint) atoi(argv[2]);
+
 	printf("%d Iterations\n", nIter);
 
 	// set logfile name and start logs
