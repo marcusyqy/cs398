@@ -46,4 +46,13 @@ extern "C" void heatDistrGPU(
 	uint nIter
 );
 
+
+extern "C" void batchHeatDistrGPU(
+	float* d_FinalData,
+	float* d_TempBuffer1,
+	float* d_TempBuffer2,
+	uint nRowPoints,
+	uint nBatchColPoints,
+	uint nIter
+);
 #endif

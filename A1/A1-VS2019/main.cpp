@@ -1,3 +1,22 @@
+/*Start Header
+******************************************************************/
+/*!
+\file main.cpp
+\author Yong Quanyi Marcus, yong.q, 390005818
+\par email: yong.q\@digipen.edu
+\date Sept 17, 2020
+\brief
+	gpu computing functions
+Copyright (C) 2020 DigiPen Institute of Technology.
+Reproduction or disclosure of this file or its contents without the
+prior written consent of DigiPen Institute of Technology is prohibited.
+*/
+/* End Header
+*******************************************************************/
+
+
+
+
 #include "cuda_runtime.h"
 #include "device_launch_parameters.h"
 
@@ -19,11 +38,11 @@
 
 const static char *sSDKsample = "[heat distribution]\0";
 
-int main(int argc, char **argv)
+int main(int argc, char** argv)
 {
-	float *d_DataIn;
-	float *d_DataOut;
-	StopWatchInterface *hTimer = NULL;
+	float* d_DataIn;
+	float* d_DataOut;
+	StopWatchInterface* hTimer = NULL;
 	int PassFailFlag = 1;
 	uint count;
 	uint nIter;
@@ -32,13 +51,13 @@ int main(int argc, char **argv)
 	deviceProp.major = 0;
 	deviceProp.minor = 0;
 
-	if (argc != 3 ) {
+	if (argc != 3) {
 		printf
 		("Usage: heat nRowPoints nIter \n\n Total number of points = nRowPoints*nRowPoints\n\n");
 		exit(0);
 	}
-	
-	nIter = (uint) atoi(argv[2]);
+
+	nIter = (uint)atoi(argv[2]);
 
 	printf("%d Iterations\n", nIter);
 
@@ -46,7 +65,7 @@ int main(int argc, char **argv)
 	printf("[%s] - Starting...\n", sSDKsample);
 
 	//Use command-line specified CUDA device, otherwise use device with highest Gflops/s
-	int dev = findCudaDevice(argc, (const char **)argv);
+	int dev = findCudaDevice(argc, (const char**)argv);
 
 	checkCudaErrors(cudaGetDeviceProperties(&deviceProp, dev));
 
@@ -59,37 +78,60 @@ int main(int argc, char **argv)
 	printf("Initializing data...\n");
 	printf("...reading input data\n");
 	uint nRowPoints = atoi(argv[1]);
-	count = nRowPoints*nRowPoints;
-	float *h_DataGPU = (float *)malloc(count*sizeof(float));
+	count = nRowPoints * nRowPoints;
+	float* h_DataGPU = (float*)malloc(count * sizeof(float));
 
 	printf("...allocating GPU memory and copying input data\n\n");
-	checkCudaErrors(cudaMalloc((void **)&d_DataIn, count*sizeof(float)));
-	checkCudaErrors(cudaMalloc((void **)&d_DataOut, count*sizeof(float)));
-
+	size_t alloc_sz = count * sizeof(float);
+	checkCudaErrors(cudaMalloc((void**)&d_DataIn, count * sizeof(float)));
 	initPoints(h_DataGPU, h_DataGPU, nRowPoints);
-	checkCudaErrors(cudaMemcpy(d_DataIn, h_DataGPU, count*sizeof(float), cudaMemcpyHostToDevice));
-	checkCudaErrors(cudaMemcpy(d_DataOut, h_DataGPU, count*sizeof(float), cudaMemcpyHostToDevice));
+	checkCudaErrors(cudaMemcpy(d_DataIn, h_DataGPU, count * sizeof(float), cudaMemcpyHostToDevice));
+
+	bool must_batch = alloc_sz * 2 > 5000000000;
+	float* temp = nullptr;
+
+	if (must_batch)
+	{
+		checkCudaErrors(cudaMalloc((void**)&d_DataOut, ((nRowPoints - 1) / 4 + 1) * nRowPoints * sizeof(float)));
+		checkCudaErrors(cudaMalloc((void**)&temp, ((nRowPoints - 1) / 4 + 1) * nRowPoints * sizeof(float)));
+	}
+	else
+		checkCudaErrors(cudaMalloc((void**)&d_DataOut, count * sizeof(float)));
 
 	//checkCudaErrors(cudaDeviceSynchronize());
 	sdkResetTimer(&hTimer);
 	sdkStartTimer(&hTimer);
 
-	heatDistrGPU(d_DataIn, d_DataOut, nRowPoints, nIter);
+	if (must_batch)
+	{
+		batchHeatDistrGPU(d_DataIn, d_DataOut, temp, nRowPoints, (nRowPoints - 1) / 4 + 1, nIter);
+		float* i = d_DataIn;
+		d_DataIn = d_DataOut;
+		d_DataOut = i;
+	}
+	else
+		heatDistrGPU(d_DataIn, d_DataOut, nRowPoints, nIter);
 
-//	printf("\nValidating GPU results...\n");
-//	printf(" ...reading back GPU results\n");
-	checkCudaErrors(cudaMemcpy(h_DataGPU, d_DataOut, count*sizeof(float), cudaMemcpyDeviceToHost));
+	//	printf("\nValidating GPU results...\n");
+	//	printf(" ...reading back GPU results\n");
+	checkCudaErrors(cudaMemcpy(h_DataGPU, d_DataOut, count * sizeof(float), cudaMemcpyDeviceToHost));
 
 	sdkStopTimer(&hTimer);
 
-	float dAvgSecs = 1.0e-3 * (double)sdkGetTimerValue(&hTimer) ;
+	float dAvgSecs = 1.0e-3 * (double)sdkGetTimerValue(&hTimer);
 	printf("GPU version time (average) : %.5f sec, %.4f MB/sec\n\n", dAvgSecs, ((double)(count * sizeof(float)) * 1.0e-6) / dAvgSecs);
 	printf("GPU version , Throughput = %.4f MB/s, Time = %.5f s, Size = %u Bytes, NumDevsUsed = %u\n",
-		(1.0e-6 * (double)(count*sizeof(float)) / dAvgSecs), dAvgSecs, (count*sizeof(float)), 1);
+		(1.0e-6 * (double)(count * sizeof(float)) / dAvgSecs), dAvgSecs, (count * sizeof(float)), 1);
 
 	printf("Shutting down...\n");
 	checkCudaErrors(cudaFree(d_DataIn));
 	checkCudaErrors(cudaFree(d_DataOut));
+
+	if (must_batch)
+	{
+		checkCudaErrors(cudaFree(temp));
+	}
+
 
 	// cudaDeviceReset causes the driver to clean up all state. While
 	// not mandatory in normal operation, it is good practice.  It is also
