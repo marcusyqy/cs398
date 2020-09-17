@@ -72,32 +72,40 @@ __global__ void heatDistrCalcRegion(float* in, float* out, uint nRowPoints, uint
 {
 
 	uint i = blockIdx.x * blockDim.x + threadIdx.x;
-	uint real_j = blockIdx.y * blockDim.y + threadIdx.y;
-	uint j = real_j + minColPoints;
+	uint j = blockIdx.y * blockDim.y + threadIdx.y;
 
-	if (i > 0 && i < nRowPoints - 1 && j >= minColPoints && j < (minColPoints + nColPoints))
+	uint offset_j = j + minColPoints;
+
+	//printf("%d, %d\n", blockIdx.x, blockIdx.y);
+	if (i < nRowPoints && j < nColPoints)
 	{
-		out[real_j * nRowPoints + i] = (
-			in[j * nRowPoints + i - 1] +
-			in[j * nRowPoints + i + 1] +
-			in[(j - 1) * nRowPoints + i] +
-			in[(j + 1) * nRowPoints + i]
-			) * 0.25f;
+		if (i == 0 || (i == nRowPoints - 1) || offset_j == 0 || (offset_j == nRowPoints - 1))
+		{
+			out[j * nRowPoints + i] = in[offset_j * nRowPoints + i];
+		}
+		else
+		{
+			//printf("setting index with : %d\nWith offset %d, %d,%d\n", j * nRowPoints + i, offset_j, j,i);
+			out[j * nRowPoints + i] = (
+				in[offset_j * nRowPoints + i - 1] +
+				in[offset_j * nRowPoints + i + 1] +
+				in[(offset_j - 1) * nRowPoints + i] +
+				in[(offset_j + 1) * nRowPoints + i]
+				) * 0.25f;
+		}
 	}
+
 }
 
 __global__ void heatDistrUpdateRegion(float* in, float* out, uint nRowPoints, uint minColPoints, uint nColPoints)
 {
 	uint i = blockIdx.x * blockDim.x + threadIdx.x;
-	uint real_j = blockIdx.y * blockDim.y + threadIdx.y;
-	uint j = real_j + minColPoints;
+	uint j = blockIdx.y * blockDim.y + threadIdx.y;
 
-
-	if (i > 0 && i < nRowPoints - 1 && j >= minColPoints && j < (minColPoints + nColPoints))
+	if (i < nRowPoints && j < nColPoints)
 	{
-		uint index_out = real_j * nRowPoints + i;
-		uint index = j * nRowPoints + i;
-		out[index] = in[index_out];
+		uint offset_j = j + minColPoints;
+		out[offset_j*nRowPoints + i] = in[j* nRowPoints + i];
 	}
 
 }
@@ -137,8 +145,7 @@ extern "C" void batchHeatDistrGPU(
 {
 	dim3 DimBlock(BLOCK_SIZE, BLOCK_SIZE, 1);
 	dim3 DimGrid2(ceil(((float)nRowPoints) / BLOCK_SIZE), ceil(((float)nBatchColPoints) / BLOCK_SIZE), 1);
-
-	uint lastBlock = nRowPoints - 3 * nBatchColPoints - 1;
+	uint lastBlock = nRowPoints - 3 * nBatchColPoints;
 
 	for (uint k = 0; k < nIter; k++) {
 
@@ -155,60 +162,62 @@ extern "C" void batchHeatDistrGPU(
 		heatDistrCalcRegion << <DimGrid2, DimBlock >> > ((float*)d_FinalData,
 			(float*)d_TempBuffer1,
 			nRowPoints, 0, nBatchColPoints);
-		getLastCudaError("heatDistrCalc E1 failed\n");
 
+
+		cudaDeviceSynchronize();
+		getLastCudaError("heatDistrCalc E1 failed\n");
 		//E2
 		heatDistrCalcRegion << <DimGrid2, DimBlock >> > ((float*)d_FinalData,
 			(float*)d_TempBuffer2,
 			nRowPoints, nBatchColPoints, nBatchColPoints);
-		getLastCudaError("heatDistrCalc E2 failed\n");
-
+		
 		cudaDeviceSynchronize();
+		getLastCudaError("heatDistrCalc E2 failed\n");
 
 		//C1
 		heatDistrUpdateRegion << <DimGrid2, DimBlock >> > ((float*)d_TempBuffer1,
-			(float*)d_FinalData,
+		(float*)d_FinalData,
 			nRowPoints, 0, nBatchColPoints);
-		getLastCudaError("heatDistrUpdate C1 failed\n");
 
 		cudaDeviceSynchronize();
+		getLastCudaError("heatDistrUpdate C1 failed\n");
 		//E3
 		heatDistrCalcRegion << <DimGrid2, DimBlock >> > ((float*)d_FinalData,
 			(float*)d_TempBuffer1,
 			nRowPoints, 2*nBatchColPoints, nBatchColPoints);
+		cudaDeviceSynchronize();
 		getLastCudaError("heatDistrCalc E3 failed\n");
 
-		cudaDeviceSynchronize();
 
 		//C2
 		heatDistrUpdateRegion << <DimGrid2, DimBlock >> > ((float*)d_TempBuffer2,
 			(float*)d_FinalData,
 			nRowPoints, nBatchColPoints, nBatchColPoints);
+		cudaDeviceSynchronize();
 		getLastCudaError("heatDistrUpdate C2 failed\n");
 
-		cudaDeviceSynchronize();
 
 		//E4
 		heatDistrCalcRegion << <DimGrid2, DimBlock >> > ((float*)d_FinalData,
 			(float*)d_TempBuffer2,
 			nRowPoints, 3 * nBatchColPoints, lastBlock);
+		cudaDeviceSynchronize();
 		getLastCudaError("heatDistrCalc E4 failed\n");
 
-		cudaDeviceSynchronize();
 
 		//C3
 		heatDistrUpdateRegion << <DimGrid2, DimBlock >> > ((float*)d_TempBuffer1,
 			(float*)d_FinalData,
 			nRowPoints, 2 * nBatchColPoints, nBatchColPoints);
+		cudaDeviceSynchronize();
 		getLastCudaError("heatDistrUpdate C3 failed\n");
 
-		cudaDeviceSynchronize();
 		//C4
 		heatDistrUpdateRegion << <DimGrid2, DimBlock >> > ((float*)d_TempBuffer2,
 			(float*)d_FinalData,
 			nRowPoints, 3 * nBatchColPoints, lastBlock);
+		cudaDeviceSynchronize();
 		getLastCudaError("heatDistrUpdate C4 failed\n");
 
-		cudaDeviceSynchronize();
 	}
 }

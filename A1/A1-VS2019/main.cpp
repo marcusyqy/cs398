@@ -87,7 +87,7 @@ int main(int argc, char** argv)
 	initPoints(h_DataGPU, h_DataGPU, nRowPoints);
 	checkCudaErrors(cudaMemcpy(d_DataIn, h_DataGPU, count * sizeof(float), cudaMemcpyHostToDevice));
 
-	bool must_batch = alloc_sz * 2 > 5000000000;
+	bool must_batch = true;//alloc_sz * 2 > 5000000000;
 	float* temp = nullptr;
 
 	if (must_batch)
