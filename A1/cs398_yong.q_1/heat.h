@@ -1,13 +1,18 @@
-/*
-* Copyright 2018 Digipen.  All rights reserved.
-*
-* Please refer to the end user license associated
-* with this source code for terms and conditions that govern your use of
-* this software. Any use, reproduction, disclosure, or distribution of
-* this software and related documentation outside the terms 
-* is strictly prohibited.
-*
+/*Start Header
+******************************************************************/
+/*!
+\file cpu.cpp
+\author Yong Quanyi Marcus, yong.q, 390005818
+\par email: yong.q\@digipen.edu
+\date Sept 17, 2020
+\brief
+	cpu & gpu forward declared functions
+Copyright (C) 2020 DigiPen Institute of Technology.
+Reproduction or disclosure of this file or its contents without the
+prior written consent of DigiPen Institute of Technology is prohibited.
 */
+/* End Header
+*******************************************************************/
 
 #ifndef HEAT_H
 #define HEAT_H

@@ -14,18 +14,6 @@ prior written consent of DigiPen Institute of Technology is prohibited.
 /* End Header
 *******************************************************************/
 
-
-
-
-/*
-* Copyright 2018 Digipen.  All rights reserved.
-*
-* Please refer to the end user license associated
-* with this source code for terms and conditions that govern your use of
-* this software. Any use, reproduction, disclosure, or distribution of
-* this software and related documentation outside the terms
-* is strictly prohibited.
-*/
 #include <helper_cuda.h>
 ////////////////////////////////////////////////////////////////////
 
@@ -118,7 +106,7 @@ extern "C" void heatDistrGPU(
 )
 {
 	dim3 DimBlock(BLOCK_SIZE, BLOCK_SIZE, 1);
-	dim3 DimGrid2(ceil(((float)nRowPoints) / BLOCK_SIZE), ceil(((float)nRowPoints) / BLOCK_SIZE), 1);
+	dim3 DimGrid2((unsigned int)ceil(((float)nRowPoints) / BLOCK_SIZE), (unsigned int)ceil(((float)nRowPoints) / BLOCK_SIZE), 1);
 
 	for (uint k = 0; k < nIter; k++) {
 		heatDistrCalc << <DimGrid2, DimBlock >> > ((float*)d_DataIn,
@@ -144,7 +132,7 @@ extern "C" void batchHeatDistrGPU(
 )
 {
 	dim3 DimBlock(BLOCK_SIZE, BLOCK_SIZE, 1);
-	dim3 DimGrid2(ceil(((float)nRowPoints) / BLOCK_SIZE), ceil(((float)nBatchColPoints) / BLOCK_SIZE), 1);
+	dim3 DimGrid2((unsigned int)ceil(((float)nRowPoints) / BLOCK_SIZE), (unsigned int)ceil(((float)nBatchColPoints) / BLOCK_SIZE), 1);
 	uint lastBlock = nRowPoints - 3 * nBatchColPoints;
 
 	for (uint k = 0; k < nIter; k++) {
