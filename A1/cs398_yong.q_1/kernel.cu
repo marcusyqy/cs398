@@ -18,6 +18,7 @@ prior written consent of DigiPen Institute of Technology is prohibited.
 ////////////////////////////////////////////////////////////////////
 
 #define BLOCK_SIZE 32
+
 typedef unsigned int uint;
 
 __global__ void heatDistrCalc(float* in, float* out, uint nRowPoints)
