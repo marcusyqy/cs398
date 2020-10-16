@@ -16,7 +16,6 @@ prior written consent of DigiPen Institute of Technology is prohibited.
 
 
 
-
 #include "cuda_runtime.h"
 #include "device_launch_parameters.h"
 
@@ -87,16 +86,20 @@ int main(int argc, char** argv)
 	initPoints(h_DataGPU, h_DataGPU, nRowPoints);
 	checkCudaErrors(cudaMemcpy(d_DataIn, h_DataGPU, count * sizeof(float), cudaMemcpyHostToDevice));
 
-	bool must_batch = true;//alloc_sz * 2 > 5000000000;
+	bool must_batch = false;// alloc_sz * 2 > 5000000000;
 	float* temp = nullptr;
 
 	if (must_batch)
 	{
+		std::cout << "hello" << std::endl;
 		checkCudaErrors(cudaMalloc((void**)&d_DataOut, ((nRowPoints - 1) / 4 + 1) * nRowPoints * sizeof(float)));
 		checkCudaErrors(cudaMalloc((void**)&temp, ((nRowPoints - 1) / 4 + 1) * nRowPoints * sizeof(float)));
 	}
 	else
+	{
 		checkCudaErrors(cudaMalloc((void**)&d_DataOut, count * sizeof(float)));
+		checkCudaErrors(cudaMemcpy(d_DataOut, h_DataGPU, count * sizeof(float), cudaMemcpyHostToDevice));
+	}
 
 	//checkCudaErrors(cudaDeviceSynchronize());
 	sdkResetTimer(&hTimer);
