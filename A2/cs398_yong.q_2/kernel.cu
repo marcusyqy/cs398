@@ -39,48 +39,43 @@ __global__ void heatDistrCalc(float* in, float* out, uint nRowPoints)
 ///Shared memory kernel function for heat distribution calculation
 __global__ void heatDistrCalcShm(float* in, float* out, uint nRowPoints)
 {
-	__shared__ float sm_memory[(BLOCK_SIZE + 2)*(BLOCK_SIZE + 2)];
+	__shared__ float sm_memory[BLOCK_SIZE + 2][BLOCK_SIZE + 2];
 
-	const uint width = BLOCK_SIZE + 2;
-
-	uint i = blockIdx.x * blockDim.x + threadIdx.x;
-	uint j = blockIdx.y * blockDim.y + threadIdx.y;
+	const uint i = blockIdx.x * blockDim.x + threadIdx.x;
+	const uint j = blockIdx.y * blockDim.y + threadIdx.y;
 
 	if (i > 0 && i < nRowPoints - 1 && j > 0 && j < nRowPoints - 1)
 	{
-		uint x = threadIdx.x + 1;
-		uint y = threadIdx.y + 1;
+		const uint x = threadIdx.x + 1;
+		const uint y = threadIdx.y + 1;
 
-		sm_memory[y * width + x] = in[j * nRowPoints + i];
+		sm_memory[y][ x] = in[j * nRowPoints + i];
 
 		if (x == 1 || i == 1)
 		{
-			sm_memory[y * width + x-1] = in[j * nRowPoints + i - 1];
+			sm_memory[y][x - 1] = in[j * nRowPoints + i - 1];
+		}
+		if (x == BLOCK_SIZE || i == nRowPoints-2)
+		{
+			sm_memory[y][x + 1] = in[j * nRowPoints + i + 1];
 		}
 
 		if (y == 1 || j == 1)
 		{
-			sm_memory[(y-1)* width + x] = in[(j - 1) * nRowPoints + i];
+			sm_memory[y - 1][x] = in[(j - 1) * nRowPoints + i];
 		}
-
-		if (x == BLOCK_SIZE || i == nRowPoints-2)
-		{
-			sm_memory[y* width + x + 1] = in[j * nRowPoints + i + 1];
-		}
-
 		if (y == BLOCK_SIZE || j == nRowPoints -2)
 		{
-			sm_memory[(y + 1)* width + x] = in[(j + 1) * nRowPoints + i];
+			sm_memory[y + 1][x] = in[(j + 1) * nRowPoints + i];
 		}
 
 		__syncthreads();
 
-
 		out[j * nRowPoints + i] = (
-			sm_memory[y* width + x - 1] +
-			sm_memory[y* width + x + 1] +
-			sm_memory[(y - 1)*width + x] +
-			sm_memory[(y + 1)*width + x]
+				sm_memory[y][x - 1] +
+				sm_memory[y][x + 1] +
+				sm_memory[y - 1][x] +
+				sm_memory[y + 1][x]
 			) * 0.25f;
 	}
 }
@@ -152,7 +147,7 @@ extern "C" void heatDistrGPU(
 	dim3 DimGrid2((unsigned int)ceil(((float)nRowPoints) / BLOCK_SIZE), (unsigned int)ceil(((float)nRowPoints) / BLOCK_SIZE), 1);
 
 	for (uint k = 0; k < nIter; k++) {
-		heatDistrCalcShm<< <DimGrid2, DimBlock >> > ((float*)d_DataIn,
+		heatDistrCalc<< <DimGrid2, DimBlock >> > ((float*)d_DataIn,
 			(float*)d_DataOut,
 			nRowPoints);
 		getLastCudaError("heatDistrCalc failed\n");
