@@ -28,9 +28,9 @@ static inline float frand() noexcept
 
 extern "C" void RandomizeMatrix(float* matrix, uint row, uint col)
 {
-	for (uint i{}; i < row; ++i)
+	for (uint i{}; i < col; ++i)
 	{
-		for (uint j{}; j < col; ++j)
+		for (uint j{}; j < row; ++j)
 		{
 			matrix[j * col + i] = frand();
 		}
