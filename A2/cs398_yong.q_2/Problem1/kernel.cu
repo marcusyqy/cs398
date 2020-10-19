@@ -147,7 +147,7 @@ extern "C" void heatDistrGPU(
 	dim3 DimGrid2((unsigned int)ceil(((float)nRowPoints) / BLOCK_SIZE), (unsigned int)ceil(((float)nRowPoints) / BLOCK_SIZE), 1);
 
 	for (uint k = 0; k < nIter; k++) {
-		heatDistrCalc<< <DimGrid2, DimBlock >> > ((float*)d_DataIn,
+		heatDistrCalcShm<< <DimGrid2, DimBlock >> > ((float*)d_DataIn,
 			(float*)d_DataOut,
 			nRowPoints);
 		getLastCudaError("heatDistrCalc failed\n");
