@@ -26,33 +26,35 @@ prior written consent of DigiPen Institute of Technology is prohibited.
 typedef unsigned int uint;
 typedef unsigned char uchar;
 
+using cand_t = double;
+
 ////////////////////////////////////////////////////////////////////////////////
 // Reference CPU version  
 ////////////////////////////////////////////////////////////////////////////////
 extern "C" void RandomizeMatrix(
-	float* pointIn,
+	double* pointIn,
 	uint col,
 	uint row
 );
 
 extern "C" void MatrixMulCPU(
-	const float* inA, 
-	const float* inB, 
-	float* out,
+	const double* inA,
+	const double* inB,
+	double* out,
 	uint rowA, 
 	uint colA, 
 	uint colB
 );
 
-extern "C" float* LoadMatrix(
+extern "C" double* LoadMatrix(
 	const char* fileName, 
 	uint * row,
 	uint * col
 );
 
-extern "C" float* SaveMatrix(
+extern "C" void SaveMatrix(
 	const char* fileName,
-	const float* matrix,
+	const double* matrix,
 	uint row,
 	uint col
 );
@@ -63,9 +65,9 @@ extern "C" float* SaveMatrix(
 ////////////////////////////////////////////////////////////////////////////////
 
 extern "C" void MatrixMulGPU(
-	const float* inA,
-	const float* inB,
-	float* out,
+	const double* inA,
+	const double* inB,
+	double* out,
 	uint rowA,
 	uint colA,
 	uint colB
