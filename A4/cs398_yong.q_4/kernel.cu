@@ -21,7 +21,7 @@ __global__ void histogram(	unsigned char *input,
 							int height) 
 {
 	__shared__ unsigned int pHistogram[HISTOGRAM256_BIN_COUNT];
-
+	
 	int x = blockIdx.x * blockDim.x + threadIdx.x;
 	int y = blockIdx.y * blockDim.y + threadIdx.y;
 
@@ -52,15 +52,13 @@ __global__ void cdfScan(unsigned int *input,
 {
 	__shared__ unsigned int pHistogram[HISTOGRAM256_BIN_COUNT];
 
-    //int i = blockIdx.x * blockDim.x + threadIdx.x;
-
-	pHistogram[threadIdx.x] = input[threadIdx.x]; //PROBABILITY((float)input[threadIdx.x], width, height);
-	pHistogram[threadIdx.x + blockDim.x] = input[threadIdx.x + blockDim.x]; //PROBABILITY((float)input[threadIdx.x + blockDim.x], width, height);
+	pHistogram[threadIdx.x] = input[threadIdx.x];
+	pHistogram[threadIdx.x + blockDim.x] = input[threadIdx.x + blockDim.x];
 	
 	for (unsigned int stride = 1;stride <=  blockDim.x; stride *= 2) {
 		int index = (threadIdx.x+1)*stride*2 - 1;
 		if(index < 2* blockDim.x)
-		pHistogram[index] += pHistogram[index-stride];
+			pHistogram[index] += pHistogram[index-stride];
 		__syncthreads();
 	}
 
@@ -139,11 +137,13 @@ extern "C" void histogram256(
 		uint offset = i * imgWidth* imgHeight;
 		uint hist_offset = i * HISTOGRAM256_BIN_COUNT;
 
-		dim3 dimGrid((imgWidth-1) / BLOCK_SIZE + 1, (imgHeight-1) / BLOCK_SIZE + 1, imgChannels);
+		dim3 dimGrid((imgWidth-1) / BLOCK_SIZE + 1, (imgHeight-1) / BLOCK_SIZE + 1, 1);
 		dim3 dimBlock(BLOCK_SIZE, BLOCK_SIZE, 1);
 
 		histogram<<<dimGrid, dimBlock>>>(
-			(unsigned char*)d_DataIn + offset, (unsigned int*)d_Histogram + hist_offset, (int)imgWidth, (int)imgHeight
+			(unsigned char*)d_DataIn + offset, 
+			(unsigned int*)d_Histogram + hist_offset, 
+			(int)imgWidth, (int)imgHeight
 		);
 
 		checkCudaErrors(cudaDeviceSynchronize());
@@ -164,7 +164,7 @@ extern "C" void histogram256(
 			(unsigned char*)d_DataIn + offset,
 			(float*)histogramCdf,
 			(unsigned char*)d_DataOut + offset,
-			(int)imgWidth, (int)imgHeight, (int)imgChannels		
+			(int)imgWidth, (int)imgHeight, (int)imgChannels
 		);
 		
 		checkCudaErrors(cudaDeviceSynchronize());
