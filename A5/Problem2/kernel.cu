@@ -85,14 +85,56 @@ extern "C" void MatrixMulGPU(
 }
 
 
-void host_pin_memory(
-	const double* inA,
-	const double* inB,
-	double* out,
-	uint rowA,
-	uint colA,
-	uint colB
-)
+cudaStream_t next_stream(cudaStream_t* streams, size_t num_streams)
+{
+	size_t i{}; 
+	for(;;) {
+		bool operations_pending = cudaStreamQuery(streams[i]) == cudaErrorNotReady;
+		if(!operations_pending)
+			break;
+		i = (i + 1)%num_streams;
+	}
+
+	return streams[i];
+}
+
+struct mat_mul
+{
+	void host_pin_memory();
+	void partial_calc();
+	void copy_back();
+	
+	// client data
+	const double* inA;
+	const double* inB;
+	double* out;
+	uint rowA;
+	uint colA;
+	uint colB;
+	uint m; 
+	uint n;
+
+	// streams
+	cudaStream_t* streams;
+	size_t s;
+
+	// host pinned memory
+	double* h_A;
+	double* h_B;
+	double* h_C;
+
+	//device memory
+	double* d_A;
+	double* d_B;
+	double* d_C;
+
+	//events 
+	cudaEvent_t host_memory_avail, host_memory_ready;
+	
+};
+
+
+void mat_mul::host_pin_memory(void)
 {
 	uint rowB = colA;
 	// loop through all column tiles for A
@@ -102,22 +144,23 @@ void host_pin_memory(
 			//loop over column tile per B row tile
 			for(uint k = 0; k < colB; ++k) {
 
-
-
+				// get next stream
+				auto stream = next_stream(streams, s);
+				//just to be safe
+				cudaStreamSynchronize(stream);
+				
+				//wait for host to be available
+				cudaEventSynchronize(host_memory_avail);
+				
+				//cudaStreamWaitEvent(stream, event);
+				cudaEventRecord(host_memory_ready);
 
 			}
 		}
 	}
 }
 
-void partial_calc(
-	const double* inA,
-	const double* inB,
-	double* out,
-	uint rowA,
-	uint colA,
-	uint colB
-)
+void mat_mul::partial_calc(void)
 {
 	uint rowB = colA;	
 	// loop through all column tiles for A
@@ -127,19 +170,23 @@ void partial_calc(
 			//loop over column tile per B row tile
 			for(uint k = 0; k < colB; ++k) {
 				
+
+				
+				
+				cudaEventSynchronize(host_memory_ready);
+				
+				// checkCudaErrors(cudaMemcpyAsync((void **) &d_A, m * sizeof(double)));
+				// checkCudaErrors(cudaMalloc((void **) &d_B, n * sizeof(double)));
+				// // output device memory
+				// checkCudaErrors(cudaMalloc((void **) &d_C, m * n * sizeof(double)));
+				//do memcpy
+				cudaEventRecord(host_memory_avail);
 			}
 		}
 	}
 }
 
-void copy_back(
-	const double* inA,
-	const double* inB,
-	double* out,
-	uint rowA,
-	uint colA,
-	uint colB
-)
+void mat_mul::copy_back(void)
 {
 	uint rowB = colA;
 	// loop through all column tiles for A
@@ -160,6 +207,9 @@ void copy_back(
 //necessary includes
 #include <thread>
 #include <array>
+#include <vector>
+
+static constexpr size_t num_threads_ = 3;
 
 extern "C" void MatrixMulGPUStream(
 	const double* inA,
@@ -167,39 +217,107 @@ extern "C" void MatrixMulGPUStream(
 	double* out,
 	uint rowA,
 	uint colA,
-	uint colB
+	uint colB,
+	uint m,
+	uint n,
+	uint s
 )
 {
 	// initializing... 
-
 	// allocate pinned memory
-	float* h_A;
-	float* h_B;
-	float* h_C;
+	double* h_A;
+	double* h_B;
+	double* h_C;
 
-	cudaHostAlloc((void **) &h_A, N * sizeof(float), cudaHostAllocDefault);
-	cudaHostAlloc((void **) &h_B, N * sizeof(float), cudaHostAllocDefault);
-	cudaHostAlloc((void **) &h_C, N * sizeof(float), cudaHostAllocDefault);
-
-
+	// input host memory
+	checkCudaErrors(cudaHostAlloc((void **) &h_A, m * sizeof(double), cudaHostAllocMapped));
+	checkCudaErrors(cudaHostAlloc((void **) &h_B, n * sizeof(double), cudaHostAllocMapped));
+	// output host memory
+	checkCudaErrors(cudaHostAlloc((void **) &h_C, m * n * sizeof(double), cudaHostAllocMapped));
 	
+	
+	double* d_A;
+	double* d_B;
+	double* d_C;
+	// input device memory
+	checkCudaErrors(cudaMalloc((void **) &d_A, m * sizeof(double)));
+	checkCudaErrors(cudaMalloc((void **) &d_B, n * sizeof(double)));
+	// output device memory
+	checkCudaErrors(cudaMalloc((void **) &d_C, m * n * sizeof(double)));
+
+	cudaEvent_t host_memory_avail, host_memory_ready;
+	checkCudaErrors(cudaEventCreate(&host_memory_avail));
+	checkCudaErrors(cudaEventCreate(&host_memory_ready));
+
+	std::vector<cudaStream_t> streams{(size_t)s, nullptr};
+	for(auto& stream : streams) {
+		checkCudaErrors(cudaStreamCreateWithFlags(&stream, cudaStreamNonBlocking));
+	}
+
+	mat_mul App{};
+
+	//client data
+	App.inA = inA;
+	App.inB = inB;
+	App.out = out;
+	App.rowA = rowA;
+	App.colA = colA;
+	App.colB = colB;
+	App.m = m;
+	App.n = n;
+
+	// streams
+	App.streams = streams.data();
+	App.s = streams.size();
+
+	// host pinned memory 
+	App.h_A = h_A;
+	App.h_B = h_B;
+	App.h_C = h_C;
+
+	//device memory
+	App.d_A = d_A;
+	App.d_B = d_B;
+	App.d_C = d_C;
+
+	//events 
+	App.host_memory_avail = host_memory_avail;
+	App.host_memory_ready = host_memory_ready;
+
+
 	//start running all here ...
+	auto t1 = [&App]() -> void { 
+		App.host_pin_memory();
+	};
+	auto t2 = [&App]() -> void { 
+		App.partial_calc();
+	};
+	auto t3 = [&App]() -> void { 
+		App.copy_back();
+	};
 
-	auto t1 = [inA, inB, out, rowA, colA, colB]() { 
-		host_pin_memory(inA, inB, out, rowA, colA, colB);
-	};
-	auto t2 = [inA, inB, out, rowA, colA, colB]() { 
-		partial_calc(inA, inB, out, rowA, colA, colB);
-	};
-	auto t3 = [inA, inB, out, rowA, colA, colB]() { 
-		copy_back(inA, inB, out, rowA, colA, colB);
-	};
-
-	std::array<std::thread, 3> threads {
+	std::array<std::thread, num_threads_> threads {
 		std::thread{t1}, std::thread{t2}, std::thread{t3}
 	};
 
 	for(auto& t: threads) {
 		t.join();
 	}
+
+
+	checkCudaErrors(cudaFreeHost(h_A));
+	checkCudaErrors(cudaFreeHost(h_B));
+	checkCudaErrors(cudaFreeHost(h_C));
+
+	checkCudaErrors(cudaFree(d_A));
+	checkCudaErrors(cudaFree(d_B));
+	checkCudaErrors(cudaFree(d_C));
+
+	for(auto& stream : streams) {
+		checkCudaErrors(cudaStreamDestroy(stream));
+	}
+
+	checkCudaErrors(cudaEventDestroy(host_memory_avail));
+	checkCudaErrors(cudaEventDestroy(host_memory_ready));
+	
 }
