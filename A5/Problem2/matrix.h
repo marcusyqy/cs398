@@ -73,4 +73,16 @@ extern "C" void MatrixMulGPU(
 	uint colB
 );
 
+extern "C" void MatrixMulGPUStream(
+	const double* inA,
+	const double* inB,
+	double* out,
+	uint rowA,
+	uint colA,
+	uint colB,
+	uint blockSize,
+	uint tileSize,
+	uint numberOfStreams
+);
+
 #endif
