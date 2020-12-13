@@ -89,19 +89,62 @@ extern "C" void MatrixMulGPU(
 #include <array>
 #include <vector>
 #include <utility>
+#include <mutex>
+#include <condition_variable>
 
-cudaStream_t next_stream(cudaStream_t* streams, size_t num_streams)
+class semaphore
 {
-	size_t i{}; 
-	for(;;) {
-		bool operations_pending = cudaStreamQuery(streams[i]) == cudaErrorNotReady;
-		if(!operations_pending)
-			break;
-		i = (i + 1)%num_streams;
+public:
+
+	semaphore(int count_ = 0) : count{ count_ }
+	{}
+
+	void signal()
+	{
+		std::unique_lock<std::mutex> lck(mtx);
+		++count;
+		cv.notify_one();
 	}
 
-	return streams[i];
-}
+	void wait()
+	{
+		std::unique_lock<std::mutex> lck(mtx);
+		while (count == 0)
+		{
+			cv.wait(lck);
+		}
+
+		--count;
+	}
+
+private:
+
+	std::mutex mtx;
+	std::condition_variable cv;
+	int count;
+};
+
+
+struct tile_data 
+{
+	//stream
+	cudaStream_t stream;
+
+	//host pointers
+	double* h_a;
+	double* h_b;
+	double* h_c;
+	
+	//device pointers
+	double* d_a;
+	double* d_b;
+	double* d_c;
+
+	// sync objects
+	semaphore _12, _23, _31;
+	bool init_once = false;
+	cudaEvent_t events[3] { nullptr, nullptr, nullptr};
+};
 
 struct mat_mul
 {
@@ -111,6 +154,8 @@ struct mat_mul
 	void partial_calc();
 	//t3
 	void copy_back();
+
+	size_t next_stream_id(size_t id);
 	
 	// client data
 	const double* inA;
@@ -123,33 +168,41 @@ struct mat_mul
 	uint tile_size;
 
 	// streams
-	cudaStream_t* streams;
-	size_t num_streams;
+	//cudaStream_t* streams;
+	//size_t num_streams;
 
-	// host pinned memory
-	double* h_A;
-	double* h_B;
-	double* h_C;
-
-	//device memory
-	double* d_A;
-	double* d_B;
-	double* d_C;
-
+	std::vector<tile_data> tiles;
+	
 	// loop stuff
 	uint num_A_columns;
 	uint num_A_rows;
 	uint num_B_columns; 
-
-
-	//events 
-	cudaEvent_t host_memory_avail, host_memory_ready, device_copied_memory;
 	
+	size_t stream_id;
 };
+
+size_t mat_mul::next_stream_id(size_t id)
+{
+	size_t i = (id + 1) % tiles.size();
+	cudaStreamSynchronize(tiles[i].stream);
+	//size_t i{}; 
+	//for(;;) {
+	//	bool operations_pending = cudaStreamQuery(tiles[i].stream) == cudaErrorNotReady;
+	//	if(!operations_pending)
+	//		break;
+	//	i = (i + 1)%tiles.size();
+	//}
+
+	return i;
+}
 
 
 void mat_mul::host_pin_memory(void)
 {
+	if (tiles.empty())
+		return;
+
+	size_t stream_id{ tiles.size() - 1 };
 	// loop through all column tiles for A
 	for(uint i = 0; i < num_A_columns; ++i) {
 		//loop over row tiles per A column tile
@@ -157,43 +210,56 @@ void mat_mul::host_pin_memory(void)
 			//loop over column tile per B row tile
 			for(uint k = 0; k < num_B_columns; ++k) {
 				// get next stream
-				auto stream = next_stream(streams, num_streams);
+				stream_id = next_stream_id(stream_id);
 
-				//just to be safe
-				cudaStreamSynchronize(stream);
-				//wait for host to be available
-				cudaEventSynchronize(host_memory_avail);
+				if (!tiles[stream_id].init_once) {
+					tiles[stream_id].init_once = true;
+				}
+				else {
+					tiles[stream_id]._31.wait();
+				}
+				
 
-				uint rows = std:min((j + 1)* block_size, rowA) - j*block_size;
-				uint col_a = std:min((i + 1)*tile_size, colA) - i*tile_size;
-				uint col_b = std:min((k + 1)*block_size, colB) - k*block_size;
+				uint offset_rows = j * block_size;
+				uint offset_col_a = i * tile_size;
+				uint offset_col_b = k * block_size;
 
-				cudaMemcpy2DAsync(
-					(void*)h_A,
+				uint rows = std::min((j + 1) * block_size, rowA) - offset_rows;
+				uint col_a = std::min((i + 1)*tile_size, colA) - offset_col_a;
+				uint col_b = std::min((k + 1)*block_size, colB) - offset_col_b;
+
+
+				cudaMemcpy2D(
+					(void*)tiles[stream_id].h_a,
 					(size_t)tile_size,
-					(const void*)(inA + , 
+					(const void*)(inA + colA * offset_rows + offset_col_a),
 					(size_t)colA,
-					(size_t)tile_size * sizeof(double),
-					(size_t)block_size,
-					cudaMemcpyHostToHost,
-					stream
+					(size_t)col_a * sizeof(double),
+					(size_t)rows,
+					cudaMemcpyHostToHost
 				);
 
-				cudaMemcpy2DAsync(
-					(void*)h_B,
+				cudaMemcpy2D(
+					(void*)tiles[stream_id].h_b,
 					(size_t)block_size,
 					(const void*)(inB + (colB)*h + w),
 					(size_t)colB,
 					(size_t)block_size * sizeof(double),
 					(size_t)tile_size,
-					cudaMemcpyHostToHost,
-					stream
+					cudaMemcpyHostToHost
 				);
 
-				//cudaStreamWaitEvent(stream, event);
+				cudaMemcpy2D(
+					(void*)tiles[stream_id].h_c,
+					(size_t)block_size,
+					(const void*)(out + (colB)*h + w),
+					(size_t)colB,
+					(size_t)block_size * sizeof(double),
+					(size_t)tile_size,
+					cudaMemcpyHostToHost
+				);
 
-
-				cudaEventRecord(host_memory_ready);
+				tiles[stream_id]._12.signal();
 			}
 		}
 	}
@@ -201,25 +267,23 @@ void mat_mul::host_pin_memory(void)
 
 void mat_mul::partial_calc(void)
 {
+	if (tiles.empty())
+		return;
+
+	size_t stream_id{ tiles.size() - 1 };
 	// loop through all column tiles for A
 	for(uint i = 0; i < num_A_columns; ++i) {
 		//loop over row tiles per A column tile
 		for(uint j = 0; j < num_A_rows; ++j) {
 			//loop over column tile per B row tile
 			for(uint k = 0; k < num_B_columns; ++k) {
-				
-				auto stream = next_stream(streams, num_streams);
-				//just to be safe
-				cudaStreamSynchronize(stream);
-				
-				cudaEventSynchronize(host_memory_ready);
-				
-				// checkCudaErrors(cudaMemcpyAsync((void **) &d_A, m * sizeof(double)));
-				// checkCudaErrors(cudaMalloc((void **) &d_B, n * sizeof(double)));
-				// // output device memory
-				// checkCudaErrors(cudaMalloc((void **) &d_C, m * n * sizeof(double)));
-				//do memcpy
-				cudaEventRecord(host_memory_avail);
+
+				stream_id = next_stream_id(stream_id);
+
+				tiles[stream_id]._12.wait();
+
+
+				tiles[stream_id]._23.signal();
 			}
 		}
 	}
@@ -227,18 +291,25 @@ void mat_mul::partial_calc(void)
 
 void mat_mul::copy_back(void)
 {
+	if (tiles.empty())
+		return;
+
+	size_t stream_id{ tiles.size() - 1 };
 	// loop through all column tiles for A
 	for(uint i = 0; i < num_A_columns; ++i) {
 		//loop over row tiles per A column tile
 		for(uint j = 0; j < num_A_rows; ++j) {
 			//loop over column tile per B row tile
 			for(uint k = 0; k < num_B_columns; ++k) {
-				auto stream = next_stream(streams, num_streams);
-				
-				
-				
-				//just to be safe
-				cudaStreamSynchronize(stream);
+				stream_id = next_stream_id(stream_id);
+
+				tiles[stream_id]._23.wait();
+
+
+				//copy x3
+
+
+				tiles[stream_id]._31.signal();
 			}
 		}
 	}
@@ -246,6 +317,10 @@ void mat_mul::copy_back(void)
 
 
 static constexpr size_t num_threads_ = 3;
+
+
+
+
 
 extern "C" void MatrixMulGPUStream(
 	const double* inA,
@@ -259,38 +334,53 @@ extern "C" void MatrixMulGPUStream(
 	uint numberOfStreams
 )
 {
-	//pin memory
+	// // initializing... 
+	// // allocate pinned memory
+	// double* h_A;
+	// double* h_B;
+	// double* h_C;
+
+	// // input host memory
+	// checkCudaErrors(cudaHostAlloc((void **) &h_A, blockSize * tileSize * sizeof(double), cudaHostAllocMapped));
+	// checkCudaErrors(cudaHostAlloc((void **) &h_B, blockSize * tileSize * sizeof(double), cudaHostAllocMapped));
+	// // output host memory
+	// checkCudaErrors(cudaHostAlloc((void **) &h_C, blockSize * blockSize * sizeof(double), cudaHostAllocMapped));
 	
+	// // allocate device local memory
+	// double* d_A;
+	// double* d_B;
+	// double* d_C;
+	// // input device memory
+	// checkCudaErrors(cudaMalloc((void **) &d_A, blockSize * tileSize * sizeof(double)));
+	// checkCudaErrors(cudaMalloc((void **) &d_B, blockSize * tileSize * sizeof(double)));
+	// // output device memory
+	// checkCudaErrors(cudaMalloc((void **) &d_C, blockSize * blockSize  * sizeof(double)));
 
-	// initializing... 
-	// allocate pinned memory
-	double* h_A;
-	double* h_B;
-	double* h_C;
+	// cudaEvent_t host_memory_avail, host_memory_ready;
+	// checkCudaErrors(cudaEventCreate(&host_memory_avail));
+	// checkCudaErrors(cudaEventCreate(&host_memory_ready));
 
-	// input host memory
-	checkCudaErrors(cudaHostAlloc((void **) &h_A, blockSize * tileSize * sizeof(double), cudaHostAllocMapped));
-	checkCudaErrors(cudaHostAlloc((void **) &h_B, blockSize * tileSize * sizeof(double), cudaHostAllocMapped));
-	// output host memory
-	checkCudaErrors(cudaHostAlloc((void **) &h_C, blockSize * tileSize * sizeof(double), cudaHostAllocMapped));
-	
-	// allocate device local memory
-	double* d_A;
-	double* d_B;
-	double* d_C;
-	// input device memory
-	checkCudaErrors(cudaMalloc((void **) &d_A, blockSize * tileSize * sizeof(double)));
-	checkCudaErrors(cudaMalloc((void **) &d_B, blockSize * tileSize * sizeof(double)));
-	// output device memory
-	checkCudaErrors(cudaMalloc((void **) &d_C, blockSize * tileSize  * sizeof(double)));
+	std::vector<tile_data> tiles{(size_t)numberOfStreams};
+	for(auto& t: tiles) {
 
-	cudaEvent_t host_memory_avail, host_memory_ready;
-	checkCudaErrors(cudaEventCreate(&host_memory_avail));
-	checkCudaErrors(cudaEventCreate(&host_memory_ready));
+		//input host memory
+		checkCudaErrors(cudaHostAlloc((void **) &(t.h_a), blockSize * tileSize * sizeof(double), cudaHostAllocMapped));
+		checkCudaErrors(cudaHostAlloc((void **) &(t.h_b), blockSize * tileSize * sizeof(double), cudaHostAllocMapped));
+		// output host memory
+		checkCudaErrors(cudaHostAlloc((void **) &(t.h_c), blockSize * blockSize * sizeof(double), cudaHostAllocMapped));
+		
+		// input device memory
+		checkCudaErrors(cudaMalloc((void **) &(t.d_a), blockSize * tileSize * sizeof(double)));
+		checkCudaErrors(cudaMalloc((void **) &(t.d_b), blockSize * tileSize * sizeof(double)));
+		// output device memory
+		checkCudaErrors(cudaMalloc((void **) &(t.d_c), blockSize * blockSize  * sizeof(double)));
+		checkCudaErrors(cudaStreamCreateWithFlags(&(t.stream), cudaStreamNonBlocking));
 
-	std::vector<cudaStream_t> streams{(size_t)numberOfStreams, nullptr};
-	for(auto& stream : streams) {
-		checkCudaErrors(cudaStreamCreateWithFlags(&stream, cudaStreamNonBlocking));
+		checkCudaErrors(cudaEventCreate(&(t.events[0])));
+		checkCudaErrors(cudaEventCreate(&(t.events[1])));
+		checkCudaErrors(cudaEventCreate(&(t.events[2])));
+
+		t.init_once = false;
 	}
 
 	mat_mul App{};
@@ -306,27 +396,15 @@ extern "C" void MatrixMulGPUStream(
 	App.tile_size = tileSize;
 
 	// streams
-	App.streams = streams.data();
-	App.num_streams = streams.size();
+	//App.streams = streams.data();
+	//App.num_streams = streams.size();
 
-	// host pinned memory 
-	App.h_A = h_A;
-	App.h_B = h_B;
-	App.h_C = h_C;
-
-	//device memory
-	App.d_A = d_A;
-	App.d_B = d_B;
-	App.d_C = d_C;
+	App.tiles = std::move(tiles);
 
 	//tile stuff
-	App.num_A_columns = ( colA - 1 ) / tileSize + 1 
-	App.num_A_rows = ( rowA  - 1 ) / blockSize + 1
-	App.num_B_columns = ( colB - 1 ) / blockSize + 1
-
-	//events 
-	App.host_memory_avail = host_memory_avail;
-	App.host_memory_ready = host_memory_ready;
+	App.num_A_columns = (colA - 1) / tileSize + 1;
+	App.num_A_rows = (rowA - 1) / blockSize + 1;
+	App.num_B_columns = (colB - 1) / blockSize + 1;
 
 
 	//start running all here ...
@@ -349,19 +427,20 @@ extern "C" void MatrixMulGPUStream(
 	}
 
 
-	checkCudaErrors(cudaFreeHost(h_A));
-	checkCudaErrors(cudaFreeHost(h_B));
-	checkCudaErrors(cudaFreeHost(h_C));
+	for(auto& t : App.tiles) {
+		checkCudaErrors(cudaFreeHost(t.h_a));
+		checkCudaErrors(cudaFreeHost(t.h_b));
+		checkCudaErrors(cudaFreeHost(t.h_c));
 
-	checkCudaErrors(cudaFree(d_A));
-	checkCudaErrors(cudaFree(d_B));
-	checkCudaErrors(cudaFree(d_C));
+		checkCudaErrors(cudaFree(t.d_a));
+		checkCudaErrors(cudaFree(t.d_b));
+		checkCudaErrors(cudaFree(t.d_c));
+		checkCudaErrors(cudaStreamDestroy(t.stream));
 
-	for(auto& stream : streams) {
-		checkCudaErrors(cudaStreamDestroy(stream));
+		checkCudaErrors(cudaEventDestroy(t.events[0]));
+		checkCudaErrors(cudaEventDestroy(t.events[1]));
+		checkCudaErrors(cudaEventDestroy(t.events[2]));
 	}
 
-	checkCudaErrors(cudaEventDestroy(host_memory_avail));
-	checkCudaErrors(cudaEventDestroy(host_memory_ready));
 	
 }

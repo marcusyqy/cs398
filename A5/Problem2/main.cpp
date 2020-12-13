@@ -286,17 +286,23 @@ int main(int argc, char** argv)
 			uint numberOfStreams = (uint)std::stoi(arg6);
 
 			// ... 
-			checkCudaErrors(cudaMalloc((void**)&AMatGpu, ARow * ACol * sizeof(double)));
-			checkCudaErrors(cudaMalloc((void**)&BMatGpu, BRow * BCol * sizeof(double)));
-			//allocate on cpu side instead
-			checkCudaErrors(cudaHostAlloc((void**)&OutputGpu, ARow* BCol * sizeof(double), cudaHostAllocDefault));
+			//checkCudaErrors(cudaMalloc((void**)&AMatGpu, ARow * ACol * sizeof(double)));
+			//checkCudaErrors(cudaMalloc((void**)&BMatGpu, BRow * BCol * sizeof(double)));
+			////allocate on cpu side instead
+			//checkCudaErrors(cudaHostAlloc((void**)&OutputGpu, ARow* BCol * sizeof(double), cudaHostAllocDefault));
 
-			checkCudaErrors(cudaMemcpy(AMatGpu, AMat, ARow * ACol * sizeof(double), cudaMemcpyHostToDevice));
-			checkCudaErrors(cudaMemcpy(BMatGpu, BMat, BRow * BCol * sizeof(double), cudaMemcpyHostToDevice));
+			//AMatGpu = (double*)malloc(ARow * ACol * sizeof(double));
+			//BMatGpu = (double*)malloc(BRow * BCol * sizeof(double));
+			//OutputGpu = (double*)malloc(ARow * BCol * sizeof(double));
+
+			OutputCmp = new double[CRow * CCol];
+
+			//checkCudaErrors(cudaMemcpy(AMatGpu, AMat, ARow * ACol * sizeof(double), cudaMemcpyHostToDevice));
+			//checkCudaErrors(cudaMemcpy(BMatGpu, BMat, BRow * BCol * sizeof(double), cudaMemcpyHostToDevice));
 
 			sdkResetTimer(&hTimer);
 			sdkStartTimer(&hTimer);
-			MatrixMulGPUStream(AMatGpu, BMatGpu, OutputGpu, ARow, ACol, BCol, blockSize, tileSize, numberOfStreams);
+			MatrixMulGPUStream(AMat, BMat, OutputCmp, ARow, ACol, BCol, blockSize, tileSize, numberOfStreams);
 			sdkStopTimer(&hTimer);
 
 			float dAvgSecs = 1.0e-3 * (double)sdkGetTimerValue(&hTimer);
@@ -306,7 +312,7 @@ int main(int argc, char** argv)
 
 			Output = LoadMatrix(arg3.c_str(), &CRow, &CCol);
 
-			OutputCmp = OutputGpu;//new double[CRow * CCol];
+			//OutputCmp = OutputGpu;//new double[CRow * CCol];
 
 			//checkCudaErrors(cudaMemcpy(OutputCmp, OutputGpu, CRow * CCol * sizeof(double), cudaMemcpyDeviceToHost));
 
@@ -325,10 +331,10 @@ int main(int argc, char** argv)
 				printf("\n\nTest PASSED");
 
 			//free relevant stuff
-			checkCudaErrors(cudaFree(AMatGpu));
-			checkCudaErrors(cudaFree(BMatGpu));
-			checkCudaErrors(cudaFreeHost(OutputGpu));
-			//delete[] OutputCmp;
+			//checkCudaErrors(cudaFree(AMatGpu));
+			//checkCudaErrors(cudaFree(BMatGpu));
+			//checkCudaErrors(cudaFreeHost(OutputGpu));
+			delete[] OutputCmp;
 			sdkDeleteTimer(&hTimer);
 		}
 	}
