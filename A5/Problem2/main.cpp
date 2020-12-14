@@ -70,12 +70,12 @@ int main(int argc, char** argv)
 	std::string arg6{};
 
 	bool a5 = false;
-	if (argc != 7) {
+	if (argc == 7) {
 		printf("\nENABLED A5\n\n");
-		a5 = true;
 		arg4 = argv[4];
 		arg5 = argv[5];
 		arg6 = argv[6];
+		a5 = (uint)std::stoi(arg6) == 1 ? false : true;
 	}
 
 
@@ -280,7 +280,6 @@ int main(int argc, char** argv)
 			sdkDeleteTimer(&hTimer);
 		}
 		else {
-
 			uint blockSize = (uint)std::stoi(arg4);
 			uint tileSize = (uint)std::stoi(arg5);
 			uint numberOfStreams = (uint)std::stoi(arg6);
